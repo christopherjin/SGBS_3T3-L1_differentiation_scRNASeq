@@ -1,0 +1,129 @@
+---
+title: "jiehan_scRNAseq_qc"
+author: "Christopher Jin"
+date: '2023-02-11'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(knitr)
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+
+
+filt_jan_hg19 = "/labs/mpsnyder/cajin/backups/jiehan_pilot/20180124_scrna/raw/SGBS-3T3-L1-HNGGWBBXX/outs/filtered_gene_bc_matrices/hg19/"
+filt_jan_mm10 = "/labs/mpsnyder/cajin/backups/jiehan_pilot/20180124_scrna/raw/SGBS-3T3-L1-HNGGWBBXX/outs/filtered_gene_bc_matrices/mm10/"
+
+filt_aug_hg19 = "/labs/mpsnyder/cajin/backups/jiehan_pilot/20180817_scrna/raw/SBBSD7plus3T3L1D5-HW5JYBBXX/outs/filtered_gene_bc_matrices/hg19/"
+filt_aug_mm10 = "/labs/mpsnyder/cajin/backups/jiehan_pilot/20180817_scrna/raw/SBBSD7plus3T3L1D5-HW5JYBBXX/outs/filtered_gene_bc_matrices/mm10/"
+
+gem_class_jan = read.table("/labs/mpsnyder/cajin/backups/jiehan_pilot/20180124_scrna/tmp/SGBS-3T3-L1-HNGGWBBXX/outs/analysis/gem_classification.csv", sep = ',', header = T)
+gem_class_aug = read.table("/labs/mpsnyder/cajin/backups/jiehan_pilot/20180817_scrna/raw/SBBSD7plus3T3L1D5-HW5JYBBXX/outs/analysis/gem_classification.csv", sep = ',', header = T)
+
+curr_spec = "mouse"
+```
+
+```{r}
+jan_human_barcodes <- gem_class_jan %>% 
+  filter(call == 'hg19') %>% 
+  pull(barcode)
+
+jan_mouse_barcodes <- gem_class_jan %>% 
+  filter(call == 'mm10') %>% 
+  pull(barcode)
+
+aug_human_barcodes <- gem_class_aug %>% 
+  filter(call == 'hg19') %>% 
+  pull(barcode)
+
+aug_mouse_barcodes <- gem_class_aug %>% 
+  filter(call == 'mm10') %>% 
+  pull(barcode)
+
+```
+
+```{r read in data}
+if (curr_spec == "human"){
+  data1 = Read10X(data.dir = filt_aug_hg19)
+  data1 = data1[,colnames(data1) %in% aug_human_barcodes]
+  data2 = Read10X(data.dir = filt_jan_hg19)
+  data2 = data2[,colnames(data2) %in% jan_human_barcodes]
+
+  current_data1 = CreateSeuratObject(data1, project = "Day 8", min.cells = 3, min.features = 200)
+  current_data2 = CreateSeuratObject(data2, project = "Day 0", min.cells = 3, min.features = 200)
+  current_data = merge(current_data1, current_data2, add.cell.ids = c("Day 8", "Day 0"), project = "all human")
+}
+if (curr_spec == "mouse"){
+  data1 = Read10X(data.dir = filt_aug_mm10)
+  data1 = data1[,colnames(data1) %in% aug_mouse_barcodes]
+  data2 = Read10X(data.dir = filt_jan_mm10)
+  data2 = data2[,colnames(data2) %in% jan_mouse_barcodes]
+  
+  current_data1 = CreateSeuratObject(data1, project = "Day 5", min.cells = 3, min.features = 200)
+  current_data2 = CreateSeuratObject(data2, project = "Day 0", min.cells = 3, min.features = 200)
+  current_data = merge(current_data1, current_data2, add.cell.ids = c("Day 5", "Day 0"), project = "all mouse")
+
+}
+current_data[['percent.mt']] = PercentageFeatureSet(current_data, pattern = "^MT-")
+VlnPlot(current_data, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+#normalize data
+current_data <- NormalizeData(current_data, normalization.method = "LogNormalize", scale.factor = 10000)
+
+```
+
+```{r finding variable features}
+current_data <- FindVariableFeatures(current_data, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(current_data), 10)
+plot1 <- VariableFeaturePlot(current_data)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+
+```
+
+```{r Running baseline data exploration}
+all.genes <- rownames(current_data)
+current_data <- ScaleData(current_data, features = all.genes)
+current_data <- RunPCA(current_data, features = VariableFeatures(object = current_data))
+print(current_data[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(current_data, dims = 1:2, reduction = "pca")
+DimPlot(current_data, reduction = "pca")
+DimHeatmap(current_data, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(current_data, dims = 1:15, cells = 500, balanced = TRUE)
+
+current_data <- JackStraw(current_data, num.replicate = 100)
+current_data <- ScoreJackStraw(current_data, dims = 1:20)
+JackStrawPlot(current_data, dims = 1:15)
+ElbowPlot(current_data)
+
+```
+```{r tSNE}
+current_data <- FindNeighbors(current_data, dims = 1:10)
+current_data <- FindClusters(current_data, resolution = 0.09)
+head(Idents(current_data), 5)
+
+current_data <- RunTSNE(current_data, dims = 1:10)
+DimPlot(current_data, reduction = "tsne")
+```
+
+```{r finding markers}
+# find markers for every cluster compared to all remaining cells, report only the positive
+# ones
+current_data.markers <- FindAllMarkers(current_data, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+current_data.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 5, order_by = avg_log2FC)
+FeaturePlot(current_data, features = current_data.markers$gene[1:5])
+```
+
+```{r heatmap based on top markers}
+current_data.markers %>%
+    group_by(cluster) %>%
+    top_n(n = 10, wt = avg_log2FC) -> top10
+DoHeatmap(current_data, features = top10$gene) + NoLegend()
+```
