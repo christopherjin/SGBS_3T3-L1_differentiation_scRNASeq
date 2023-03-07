@@ -1,2 +1,6 @@
 # SGBS_3T3-L1_differentiation_scRNASeq
 Code used for general QC and data visualization of SGBS and 3T3-L1 scRNAseq at different stages of differentiation
+
+Sequencing data have been submitted to the NCBI Gene Expression Omnibus (GSE226365). The dataset consists of raw sequencing data in FASTQ format, separated by the time point: D0 3T3-L1 and D0 SGBS (GSM7073976) and D5 3T3-L1 and D8 SGBS (GSM7073977). In addition, we provide processed data, separated by time point and cell line, including barcodes.tsv, genes.tsv and matrix.mtx files, listing raw UMI counts for each gene (feature) in each cell (barcode) in a sparse matrix format. 
+
+Processing of samples were first done through Cell Ranger; Cell Ranger v2.10 was used for processing and analysing the raw single cell FASTQ files. The following genome builds were used: mm10 for the mouse genome, hg19 for the human genome. Quality control (QC) steps taken to assess the quality of the sequencing data and identify potential included: sample demultiplexing, read alignment and filtering, gene expression quantification, cell filtering and QC metrics, and data normalization and batch correction. Only reads mapping to mm10 or hg19 were used for downstream processing.
