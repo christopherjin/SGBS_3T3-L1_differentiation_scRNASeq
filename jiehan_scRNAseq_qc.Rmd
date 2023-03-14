@@ -24,7 +24,7 @@ filt_aug_mm10 = "/labs/mpsnyder/cajin/backups/jiehan_pilot/20180817_scrna/raw/SB
 gem_class_jan = read.table("/labs/mpsnyder/cajin/backups/jiehan_pilot/20180124_scrna/tmp/SGBS-3T3-L1-HNGGWBBXX/outs/analysis/gem_classification.csv", sep = ',', header = T)
 gem_class_aug = read.table("/labs/mpsnyder/cajin/backups/jiehan_pilot/20180817_scrna/raw/SBBSD7plus3T3L1D5-HW5JYBBXX/outs/analysis/gem_classification.csv", sep = ',', header = T)
 
-curr_spec = "mouse"
+curr_spec = "human"
 ```
 
 ```{r}
@@ -83,7 +83,6 @@ current_data <- FindVariableFeatures(current_data, selection.method = "vst", nfe
 top10 <- head(VariableFeatures(current_data), 10)
 plot1 <- VariableFeaturePlot(current_data)
 plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
-
 ```
 
 ```{r Running baseline data exploration}
@@ -109,6 +108,10 @@ head(Idents(current_data), 5)
 
 current_data <- RunTSNE(current_data, dims = 1:10)
 DimPlot(current_data, reduction = "tsne")
+```
+```{r UMAP}
+current_data <- RunUMAP(current_data, dims = 1:10)
+DimPlot(current_data, reduction = "umap")
 ```
 
 ```{r finding markers}
