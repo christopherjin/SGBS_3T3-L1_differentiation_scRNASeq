@@ -56,6 +56,7 @@ if (curr_spec == "human"){
   current_data1 = CreateSeuratObject(data1, project = "Day 8", min.cells = 3, min.features = 200)
   current_data2 = CreateSeuratObject(data2, project = "Day 0", min.cells = 3, min.features = 200)
   current_data = merge(current_data1, current_data2, add.cell.ids = c("Day 8", "Day 0"), project = "all human")
+  current_data[['percent.mt']] = PercentageFeatureSet(current_data, pattern = "^MT-")
 }
 if (curr_spec == "mouse"){
   data1 = Read10X(data.dir = filt_aug_mm10)
@@ -66,9 +67,9 @@ if (curr_spec == "mouse"){
   current_data1 = CreateSeuratObject(data1, project = "Day 5", min.cells = 3, min.features = 200)
   current_data2 = CreateSeuratObject(data2, project = "Day 0", min.cells = 3, min.features = 200)
   current_data = merge(current_data1, current_data2, add.cell.ids = c("Day 5", "Day 0"), project = "all mouse")
+  current_data[['percent.mt']] = PercentageFeatureSet(current_data, pattern = "^mt-")
 
 }
-current_data[['percent.mt']] = PercentageFeatureSet(current_data, pattern = "^MT-")
 VlnPlot(current_data, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
 
 #normalize data
