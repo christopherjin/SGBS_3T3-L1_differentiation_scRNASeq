@@ -24,7 +24,7 @@ filt_aug_mm10 = "/labs/mpsnyder/cajin/backups/jiehan_pilot/20180817_scrna/raw/SB
 gem_class_jan = read.table("/labs/mpsnyder/cajin/backups/jiehan_pilot/20180124_scrna/tmp/SGBS-3T3-L1-HNGGWBBXX/outs/analysis/gem_classification.csv", sep = ',', header = T)
 gem_class_aug = read.table("/labs/mpsnyder/cajin/backups/jiehan_pilot/20180817_scrna/raw/SBBSD7plus3T3L1D5-HW5JYBBXX/outs/analysis/gem_classification.csv", sep = ',', header = T)
 
-curr_spec = "human"
+curr_spec = "mouse"
 ```
 
 ```{r}
@@ -52,7 +52,7 @@ if (curr_spec == "human"){
   data1 = data1[,colnames(data1) %in% aug_human_barcodes]
   data2 = Read10X(data.dir = filt_jan_hg19)
   data2 = data2[,colnames(data2) %in% jan_human_barcodes]
-
+  
   current_data1 = CreateSeuratObject(data1, project = "Day 8", min.cells = 3, min.features = 200)
   current_data2 = CreateSeuratObject(data2, project = "Day 0", min.cells = 3, min.features = 200)
   current_data = merge(current_data1, current_data2, add.cell.ids = c("Day 8", "Day 0"), project = "all human")
@@ -68,13 +68,13 @@ if (curr_spec == "mouse"){
   current_data2 = CreateSeuratObject(data2, project = "Day 0", min.cells = 3, min.features = 200)
   current_data = merge(current_data1, current_data2, add.cell.ids = c("Day 5", "Day 0"), project = "all mouse")
   current_data[['percent.mt']] = PercentageFeatureSet(current_data, pattern = "^mt-")
-
+  
 }
 VlnPlot(current_data, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+VlnPlot(current_data, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
 
 #normalize data
 current_data <- NormalizeData(current_data, normalization.method = "LogNormalize", scale.factor = 10000)
-
 ```
 
 ```{r finding variable features}
@@ -100,8 +100,26 @@ current_data <- JackStraw(current_data, num.replicate = 100)
 current_data <- ScoreJackStraw(current_data, dims = 1:20)
 JackStrawPlot(current_data, dims = 1:15)
 ElbowPlot(current_data)
-
 ```
+
+```{r evaluating batch correction}
+if (curr_spec == "human"){housekeeping = "hg19-PPIA"} #HPRT
+if (curr_spec == "mouse"){housekeeping = "mm10-Ppia"}
+
+counts = current_data@assays$RNA@scale.data
+cells_d0 = rownames(current_data@meta.data[current_data@meta.data$orig.ident == "Day 0",])
+day_0_counts = counts[,colnames(counts) %in% cells_d0]
+avg_housekeeping_d0 = day_0_counts[rownames(day_0_counts) %in% housekeeping,]
+
+cells_final_day = rownames(current_data@meta.data[!current_data@meta.data$orig.ident == "Day 0",])
+day_f_counts = counts[,colnames(counts) %in% cells_final_day]
+avg_housekeeping_f = day_f_counts[rownames(day_f_counts) %in% housekeeping,]
+
+par(mfrow=c(1,2)) # Set the plotting layout to two plots side-by-side
+boxplot(avg_housekeeping_d0, main="Day 0", xlab=sprintf("Housekeeping gene %s - PPIA", curr_spec), ylab="Average logNorm counts")
+boxplot(avg_housekeeping_f, main="Final Day", xlab=sprintf("Housekeeping gene %s - PPIA", curr_spec), ylab="Average logNorm counts")
+```
+
 ```{r tSNE}
 current_data <- FindNeighbors(current_data, dims = 1:10)
 current_data <- FindClusters(current_data, resolution = 0.09)
@@ -113,6 +131,10 @@ DimPlot(current_data, reduction = "tsne")
 ```{r UMAP}
 current_data <- RunUMAP(current_data, dims = 1:10)
 DimPlot(current_data, reduction = "umap")
+
+#-------save current_data as R object for easier referencing + GEO upload --------
+current_data_R = sprintf("current_data.%s.Rds", curr_spec)
+if (!file.exists(current_data_R)) {saveRDS(current_data, file = current_data_R)}
 ```
 
 ```{r finding markers}
@@ -120,14 +142,76 @@ DimPlot(current_data, reduction = "umap")
 # ones
 current_data.markers <- FindAllMarkers(current_data, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
 current_data.markers %>%
-    group_by(cluster) %>%
-    slice_max(n = 5, order_by = avg_log2FC)
+  group_by(cluster) %>%
+  slice_max(n = 5, order_by = avg_log2FC)
 FeaturePlot(current_data, features = current_data.markers$gene[1:5])
 ```
 
 ```{r heatmap based on top markers}
 current_data.markers %>%
-    group_by(cluster) %>%
-    top_n(n = 10, wt = avg_log2FC) -> top10
+  group_by(cluster) %>%
+  top_n(n = 10, wt = avg_log2FC) -> top10
 DoHeatmap(current_data, features = top10$gene) + NoLegend()
+
+markers_csv = sprintf("current_data.markers.%s.csv", curr_spec)
+if (!file.exists(markers_csv)) {write.csv(current_data.markers, file = markers_csv)}
 ```
+
+```{r}
+library(slingshot)
+library(RColorBrewer)
+pal <- c(RColorBrewer::brewer.pal(9, "Set1"), RColorBrewer::brewer.pal(8, "Set2"))
+dimred = current_data@reductions$umap@cell.embeddings
+clustering = current_data$RNA_snn_res.0.09
+counts = as.matrix(current_data@assays$RNA@counts[current_data@assays$RNA@var.features,])
+set.seed(1)
+lineages <- slingshot::getLineages(data = dimred,
+                        clusterLabels = clustering,
+                        start.clus = "0") #define where to start the trajectories
+# Plot the lineages
+par(mfrow = c(1, 2))
+plot(dimred[, 1:2], col = pal[clustering], cex = 0.5, pch = 16)
+for (i in levels(clustering)) {
+    text(mean(dimred[clustering == i, 1]), mean(dimred[clustering == i, 2]), labels = i, font = 2)
+}
+plot(dimred[, 1:2], col = pal[clustering], cex = 0.5, pch = 16)
+lines(SlingshotDataSet(lineages), lwd = 3, col = "black")
+```
+
+```{r venn_diagram of markers human v mouse, eval = T, include = T}
+library(eulerr)
+human.markers = read.csv(sprintf("current_data.markers.%s.csv", "human"))
+mouse.markers = read.csv(sprintf("current_data.markers.%s.csv", "mouse"))
+total_markers = rbind(human.markers, mouse.markers) %>% 
+  dplyr::mutate(species = str_extract(gene, "^[^-]+"),
+                gene_name = str_extract(gene, "(?<=-)[^[:space:]]+"), # extract the second wildcard
+                gene_name = toupper(gene_name)) %>%
+  dplyr::select(cluster, species, gene, gene_name)
+plots_list <- list()
+for (cluster_num in unique(total_markers$cluster)){
+  cluster_markers <- total_markers[total_markers$cluster == cluster_num,]
+  species_sets <- list(
+    human = unique(cluster_markers$gene_name[cluster_markers$species == "hg19"]),
+    mouse = unique(cluster_markers$gene_name[cluster_markers$species == "mm10"])
+  )
+  venn <- euler(species_sets, shape = "ellipse", fills = c("#00A0B0", "#CC333F"), quantities = TRUE)
+  p = plot(venn, main = paste0("Cluster ", cluster_num), counts = TRUE, quantities = TRUE, cex = 1.5, lwd = 2, fontface = "bold")
+  plots_list[[cluster_num + 1]] <- p
+}
+grid.arrange(grobs = plots_list, ncol = 3)
+```
+
+```{r, include = T, eval = F}
+#making sure mouse and human gene format is the same
+mouse.markers = total_markers[total_markers$species == 'mm10',]
+ensembl <- useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+ensembl_ids <- getBM(attributes = c("ensembl_gene_id", "external_gene_name", "hsapiens_homolog_associated_gene_name"),
+                     filters = "external_gene_name",
+                     values = toupper(mouse.markers$gene_name),
+                     mart = ensembl) 
+ensembl_ids_filtered <- ensembl_ids %>%
+  filter(!is.na(hsapiens_homolog_associated_gene_name) & nzchar(hsapiens_homolog_associated_gene_name)) %>%
+  mutate(external_gene_name = toupper(external_gene_name))
+mouse.markers = merge(mouse.markers, ensembl_ids_filtered, by.x = "gene_name", by.y = "external_gene_name")
+```
+
