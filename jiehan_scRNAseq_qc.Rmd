@@ -70,8 +70,8 @@ if (curr_spec == "mouse"){
   current_data[['percent.mt']] = PercentageFeatureSet(current_data, pattern = "^mt-")
   
 }
-VlnPlot(current_data, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
-VlnPlot(current_data, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+# VlnPlot(current_data, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+VlnPlot(current_data, features = c("nFeature_RNA", "nCount_RNA"), ncol = 2, pt.size = 0)
 
 #normalize data
 current_data <- NormalizeData(current_data, normalization.method = "LogNormalize", scale.factor = 10000)
@@ -115,9 +115,13 @@ cells_final_day = rownames(current_data@meta.data[!current_data@meta.data$orig.i
 day_f_counts = counts[,colnames(counts) %in% cells_final_day]
 avg_housekeeping_f = day_f_counts[rownames(day_f_counts) %in% housekeeping,]
 
+min_val <- min(min(avg_housekeeping_d0), min(avg_housekeeping_f))
+max_val <- max(max(avg_housekeeping_d0), max(avg_housekeeping_f))
 par(mfrow=c(1,2)) # Set the plotting layout to two plots side-by-side
-boxplot(avg_housekeeping_d0, main="Day 0", xlab=sprintf("Housekeeping gene %s - PPIA", curr_spec), ylab="Average logNorm counts")
-boxplot(avg_housekeeping_f, main="Final Day", xlab=sprintf("Housekeeping gene %s - PPIA", curr_spec), ylab="Average logNorm counts")
+boxplot(avg_housekeeping_d0, main="Day 0", xlab=sprintf("Housekeeping gene %s - PPIA", curr_spec), ylab="Average logNorm counts", ylim = c(min_val, max_val))
+
+boxplot(avg_housekeeping_f, main="Final Day", xlab=sprintf("Housekeeping gene %s - PPIA", curr_spec), ylab="Average logNorm counts", ylim = c(min_val, max_val))
+
 ```
 
 ```{r tSNE}
@@ -138,13 +142,25 @@ if (!file.exists(current_data_R)) {saveRDS(current_data, file = current_data_R)}
 ```
 
 ```{r finding markers}
-# find markers for every cluster compared to all remaining cells, report only the positive
-# ones
+library(cowplot)
 current_data.markers <- FindAllMarkers(current_data, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
-current_data.markers %>%
+top_markers <- current_data.markers %>%
   group_by(cluster) %>%
-  slice_max(n = 5, order_by = avg_log2FC)
-FeaturePlot(current_data, features = current_data.markers$gene[1:5])
+  slice_max(n = 4, order_by = avg_log2FC)
+
+# Create a list of plots for the top 3 markers in each cluster
+cluster_ids <- unique(top_markers$cluster)
+plots_list <- lapply(cluster_ids, function(cluster_id) {
+  marker_genes <- top_markers %>%
+    filter(cluster == cluster_id) %>%
+    pull(gene)
+  
+  p <- FeaturePlot(current_data, features = marker_genes)
+  return(p)
+})
+plots_list[[1]]
+plots_list[[2]]
+plots_list[[3]]
 ```
 
 ```{r heatmap based on top markers}
@@ -170,16 +186,18 @@ lineages <- slingshot::getLineages(data = dimred,
                         start.clus = "0") #define where to start the trajectories
 # Plot the lineages
 par(mfrow = c(1, 2))
-plot(dimred[, 1:2], col = pal[clustering], cex = 0.5, pch = 16)
+plot(dimred[, 1:2], col = pal[clustering], cex = 0.5, pch = 16, main = paste(curr_spec,"Cluster Labels"))
 for (i in levels(clustering)) {
     text(mean(dimred[clustering == i, 1]), mean(dimred[clustering == i, 2]), labels = i, font = 2)
 }
-plot(dimred[, 1:2], col = pal[clustering], cex = 0.5, pch = 16)
+plot(dimred[, 1:2], col = pal[clustering], cex = 0.5, pch = 16, main =  paste(curr_spec,"Pseudotime"))
 lines(SlingshotDataSet(lineages), lwd = 3, col = "black")
 ```
 
 ```{r venn_diagram of markers human v mouse, eval = T, include = T}
 library(eulerr)
+library(stringr)
+library(gridExtra)
 human.markers = read.csv(sprintf("current_data.markers.%s.csv", "human"))
 mouse.markers = read.csv(sprintf("current_data.markers.%s.csv", "mouse"))
 total_markers = rbind(human.markers, mouse.markers) %>% 
